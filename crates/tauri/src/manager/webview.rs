@@ -411,39 +411,11 @@ impl<R: Runtime> WebviewManager<R> {
     let app_manager = manager.manager();
 
     #[allow(unused_mut)] // mut url only for the data-url parsing
-    let mut url = match &pending.webview_attributes.url {
-      WebviewUrl::App(path) => {
-        let app_url = app_manager.get_url(pending.webview_attributes.use_https_scheme);
-        let url = if PROXY_DEV_SERVER && is_local_network_url(&app_url) {
-          Cow::Owned(Url::parse("tauri://localhost").unwrap())
-        } else {
-          app_url
-        };
-        // ignore "index.html" just to simplify the url
-        if path.to_str() != Some("index.html") {
-          url
-            .join(&path.to_string_lossy())
-            .map_err(crate::Error::InvalidUrl)
-            // this will never fail
-            .unwrap()
-        } else {
-          url.into_owned()
-        }
-      }
-      WebviewUrl::External(url) => {
-        let config_url = app_manager.get_url(pending.webview_attributes.use_https_scheme);
-        let is_app_url = config_url.make_relative(url).is_some();
-        let mut url = url.clone();
-        if is_app_url && PROXY_DEV_SERVER && is_local_network_url(&url) {
-          Url::parse("tauri://localhost").unwrap()
-        } else {
-          url
-        }
-      }
-
-      WebviewUrl::CustomProtocol(url) => url.clone(),
-      _ => unimplemented!(),
-    };
+    let mut url = resolve_webview_url(
+      &pending.webview_attributes.url,
+      app_manager,
+      pending.webview_attributes.use_https_scheme,
+    )?;
 
     #[cfg(not(feature = "webview-data-url"))]
     if url.scheme() == "data" {
@@ -670,6 +642,49 @@ impl<R: Runtime> Webview<R> {
         _ => false,
       })
   }
+}
+
+/// Converts a [`WebviewUrl`] to a [`Url`] using the webview initialization logic.
+/// This helper function is shared between webview initialization and URL resolution.
+fn resolve_webview_url<R: Runtime>(
+  webview_url: &WebviewUrl,
+  app_manager: &AppManager<R>,
+  use_https_scheme: bool,
+) -> crate::Result<Url> {
+  let url = match webview_url {
+    WebviewUrl::App(path) => {
+      let app_url = app_manager.get_url(use_https_scheme);
+      let url = if PROXY_DEV_SERVER && is_local_network_url(&app_url) {
+        Cow::Owned(Url::parse("tauri://localhost").unwrap())
+      } else {
+        app_url
+      };
+      // ignore "index.html" just to simplify the url
+      if path.to_str() != Some("index.html") {
+        url
+          .join(&path.to_string_lossy())
+          .map_err(crate::Error::InvalidUrl)
+          // this will never fail
+          .unwrap()
+      } else {
+        url.into_owned()
+      }
+    }
+    WebviewUrl::External(url) => {
+      let config_url = app_manager.get_url(use_https_scheme);
+      let is_app_url = config_url.make_relative(url).is_some();
+      let mut url = url.clone();
+      if is_app_url && PROXY_DEV_SERVER && is_local_network_url(&url) {
+        Url::parse("tauri://localhost").unwrap()
+      } else {
+        url
+      }
+    }
+    WebviewUrl::CustomProtocol(url) => url.clone(),
+    _ => unimplemented!(),
+  };
+
+  Ok(url)
 }
 
 fn on_webview_event<R: Runtime>(webview: &Webview<R>, event: &WebviewEvent) -> crate::Result<()> {
